@@ -1004,6 +1004,95 @@ body {
 .history-block .hist-option.disabled { cursor: default; pointer-events: none; }
 .history-block .hist-feedback.wrong-fb { background: #fef2f2; color: #991b1b; }
 
+/* ========== 策论评分展示 ========== */
+.history-block .hist-eval {
+  margin-top: 12px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: none;
+}
+.history-block .hist-eval.show { display: block; }
+.hist-eval .eval-score-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: var(--radius-sm);
+}
+.hist-eval .eval-score-circle {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: 3px solid;
+}
+.hist-eval .eval-score-num { font-size: 1.6rem; line-height: 1; }
+.hist-eval .eval-score-max { font-size: .7rem; opacity: .7; }
+.hist-eval .eval-grade { font-size: 1rem; font-weight: 700; }
+.hist-eval .eval-grade-desc { font-size: .82rem; color: #64748b; }
+/* 评分颜色 */
+.hist-eval.score-high .eval-score-circle { border-color: #16a34a; color: #16a34a; background: #f0fdf4; }
+.hist-eval.score-high .eval-grade { color: #16a34a; }
+.hist-eval.score-mid .eval-score-circle { border-color: #ca8a04; color: #ca8a04; background: #fefce8; }
+.hist-eval.score-mid .eval-grade { color: #ca8a04; }
+.hist-eval.score-low .eval-score-circle { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+.hist-eval.score-low .eval-grade { color: #dc2626; }
+.hist-eval .eval-detail {
+  margin-top: 10px;
+  padding: 14px 16px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  font-size: .88rem;
+  line-height: 1.8;
+  color: #334155;
+}
+.hist-eval .eval-detail .eval-dim {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.hist-eval .eval-detail .eval-dim-bar {
+  flex: 1;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.hist-eval .eval-detail .eval-dim-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width .6s ease;
+}
+.hist-eval .eval-detail .eval-dim-label { font-size: .8rem; width: 70px; flex-shrink: 0; }
+.hist-eval .eval-detail .eval-dim-score { font-size: .8rem; font-weight: 600; width: 40px; text-align: right; flex-shrink: 0; }
+.hist-eval .eval-detail .eval-comment {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #cbd5e1;
+  font-size: .88rem;
+  color: #475569;
+}
+.hist-eval .eval-retry-btn {
+  margin-top: 10px;
+  padding: 8px 20px;
+  background: #fff;
+  border: 2px solid var(--history-color);
+  color: var(--history-color);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: .88rem;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.hist-eval .eval-retry-btn:hover { background: var(--history-light); }
+
 /* ========== 学习小助手 ========== */
 .help-btn {
   margin-top: 12px;
@@ -1722,6 +1811,7 @@ function openQuiz(subject) {
         }
       });
     }
+    // 恢复历史评分和反馈（无需赋给window，渲染时从mod读取）
     renderHistoryStory();
   } else {
     renderQuestions(subject);
@@ -1870,13 +1960,16 @@ function renderHistoryStory() {
         '<div class="hist-prompt"><span class="prompt-label">💭 深度思考：</span>' + q.prompt + '</div>';
       
       if (answered) {
+        var savedScore = mod.historyScores && mod.historyScores[q.id] || 10;
         html += '<textarea class="hist-textarea" disabled>' + (window._historyReflections && window._historyReflections[idx] || '') + '</textarea>';
-        html += '<button class="hist-submit" disabled>已提交（+10积分）</button>';
-        html += '<div class="hist-feedback show">✅ 已完成评论，+10积分！</div>';
+        html += '<button class="hist-submit" disabled>已提交（+' + savedScore + '积分）</button>';
+        if (mod.historyFeedback && mod.historyFeedback[q.id]) {
+          html += '<div class="hist-eval show ' + (savedScore >= 8 ? 'score-high' : savedScore >= 5 ? 'score-mid' : 'score-low') + '">' + (mod.historyFeedback[q.id] || '') + '</div>';
+        }
       } else {
         html += '<textarea class="hist-textarea" id="hist-input-' + idx + '" placeholder="先写下你对这段历史的总结（核心主题/教训），再写出你的看法和理由..."></textarea>';
-        html += '<button class="hist-submit" onclick="submitHistoryReflection(' + idx + ')">提交评论（+10积分）</button>';
-        html += '<div class="hist-feedback" id="hist-fb-' + idx + '"></div>';
+        html += '<button class="hist-submit" onclick="submitHistoryReflection(' + idx + ')">提交评论</button>';
+        html += '<div class="hist-eval" id="hist-eval-' + idx + '"></div>';
       }
       
       html += '<button class="help-btn" onclick="toggleHelp(\'history\', ' + idx + ')">💡 学习小助手</button>';
@@ -1886,11 +1979,75 @@ function renderHistoryStory() {
   }).join('');
 }
 
+function evaluateHistoryReflection(text, q) {
+  // 从题目中提取关键词
+  var topicWords = q.topic.replace(/[：:，,。\s]/g, '').split('');
+  var titleWords = q.title.split(/[，,。\s：:、]/).filter(function(w){ return w.length >= 1; });
+  var storyWords = q.story.substring(0, 60).split(/[，,。\s：:、]/).filter(function(w){ return w.length >= 2; }).slice(0, 8);
+  var keyTerms = titleWords.concat(storyWords).concat([q.topic]);
+  
+  // 1. 篇幅评分 0-2.5
+  var len = text.length;
+  var lenScore = len < 40 ? 0.5 : len < 80 ? 1 : len < 140 ? 1.5 : len < 220 ? 2 : 2.5;
+  
+  // 2. 概括能力 0-3
+  var summaryKeywords = ['总结', '概括', '核心', '主题', '教训', '启示', '意义', '这段历史', '主要', '重要', '表明', '反映', '体现', '说明', '告诉', '是因为', '原因', '结果', '影响'];
+  var summaryHits = summaryKeywords.filter(function(k){ return text.indexOf(k) >= 0; }).length;
+  var summaryScore = Math.min(3, summaryHits * 0.5 + 0.5);
+  
+  // 3. 观点深度 0-3
+  var opinionKeywords = ['我认为', '我觉得', '看法', '观点', '值得', '应该', '可以', '如果', '也许', '可能', '假如', '不仅', '但是', '然而', '却', '不同意', '赞同', '反对', '支持', '一方面', '另一方面'];
+  var opinionHits = opinionKeywords.filter(function(k){ return text.indexOf(k) >= 0; }).length;
+  var opinionScore = Math.min(3, opinionHits * 0.4 + 0.3);
+  // 如果有对比/两面性思考加分
+  if (text.indexOf('一方面') >= 0 || text.indexOf('另一方面') >= 0 || text.indexOf('不仅') >= 0 || text.indexOf('但是') >= 0 || text.indexOf('然而') >= 0) {
+    opinionScore = Math.min(3, opinionScore + 0.5);
+  }
+  
+  // 4. 关联度 0-1.5
+  var relevanceHits = keyTerms.filter(function(k){ return text.indexOf(k) >= 0; }).length;
+  var relevanceScore = Math.min(1.5, relevanceHits * 0.3 + 0.3);
+  
+  var total = Math.round((lenScore + summaryScore + opinionScore + relevanceScore) * 10) / 10;
+  total = Math.max(1, Math.min(10, total)); // 1-10
+  
+  // 生成反馈
+  var grade, gradeDesc, emoji;
+  if (total >= 9) { grade = 'S 优秀'; gradeDesc = '概括到位，观点鲜明，论证有力！'; emoji = '🏆'; }
+  else if (total >= 7.5) { grade = 'A 良好'; gradeDesc = '写得不错，有自己的思考和见解。'; emoji = '⭐'; }
+  else if (total >= 5.5) { grade = 'B 中等'; gradeDesc = '内容基本正确，但可以更深入一些。'; emoji = '📝'; }
+  else if (total >= 3.5) { grade = 'C 加油'; gradeDesc = '内容偏简单，建议再读一遍故事加深理解。'; emoji = '💪'; }
+  else { grade = 'D 需努力'; gradeDesc = '字数太少，请结合历史故事重新思考。'; emoji = '📖'; }
+  
+  // 建议
+  var suggestions = [];
+  if (summaryScore < 1.5) suggestions.push('尝试用一两句话概括这段历史的核心主题或教训');
+  if (opinionScore < 1.5) suggestions.push('可以多写写"我认为..."，表达你自己的看法');
+  if (relevanceScore < 1) suggestions.push('建议更紧密地结合题目中的历史事件来写');
+  if (len < 80) suggestions.push('内容可以再丰富一些，多写几句');
+  
+  var feedbackHtml = '<div class="eval-score-row">' +
+    '<div class="eval-score-circle"><span class="eval-score-num">' + Math.round(total) + '</span><span class="eval-score-max">/10</span></div>' +
+    '<div><div class="eval-grade">' + emoji + ' ' + grade + '</div><div class="eval-grade-desc">' + gradeDesc + '</div></div>' +
+    '</div>' +
+    '<div class="eval-detail">' +
+    '<div class="eval-dim"><span class="eval-dim-label">篇幅</span><div class="eval-dim-bar"><div class="eval-dim-fill" style="width:' + (lenScore/2.5*100) + '%;background:#6366f1;"></div></div><span class="eval-dim-score">' + lenScore.toFixed(1) + '</span></div>' +
+    '<div class="eval-dim"><span class="eval-dim-label">概括</span><div class="eval-dim-bar"><div class="eval-dim-fill" style="width:' + (summaryScore/3*100) + '%;background:#f59e0b;"></div></div><span class="eval-dim-score">' + summaryScore.toFixed(1) + '</span></div>' +
+    '<div class="eval-dim"><span class="eval-dim-label">观点</span><div class="eval-dim-bar"><div class="eval-dim-fill" style="width:' + (opinionScore/3*100) + '%;background:#10b981;"></div></div><span class="eval-dim-score">' + opinionScore.toFixed(1) + '</span></div>' +
+    '<div class="eval-dim"><span class="eval-dim-label">关联度</span><div class="eval-dim-bar"><div class="eval-dim-fill" style="width:' + (relevanceScore/1.5*100) + '%;background:#ec4899;"></div></div><span class="eval-dim-score">' + relevanceScore.toFixed(1) + '</span></div>';
+  if (suggestions.length > 0) {
+    feedbackHtml += '<div class="eval-comment">💡 改进建议：' + suggestions.join('；') + '</div>';
+  }
+  feedbackHtml += '</div>';
+  
+  return { score: Math.round(total), scoreDetail: total, feedbackHtml: feedbackHtml, grade: grade };
+}
+
 function submitHistoryReflection(idx) {
-  const input = document.getElementById('hist-input-' + idx);
+  var input = document.getElementById('hist-input-' + idx);
   if (!input) return;
   
-  const text = input.value.trim();
+  var text = input.value.trim();
   if (!text || text.length < 20) {
     showToast('请至少写20个字——先总结核心主题，再写你的看法', 'info');
     return;
@@ -1898,35 +2055,65 @@ function submitHistoryReflection(idx) {
   
   if (answers[idx] !== undefined) return;
   
-  const q = currentQuestions[idx];
+  var q = currentQuestions[idx];
   
-  // 保存感想（内存+持久化）
+  // 评估
+  var result = evaluateHistoryReflection(text, q);
+  
+  // 保存感想 + 评分
   if (!window._historyReflections) window._historyReflections = {};
   window._historyReflections[idx] = text;
   
-  // 持久化答题状态
-  const mod = appData.modules.history;
+  var mod = appData.modules.history;
   if (!mod.answeredIds) mod.answeredIds = [];
   if (!mod.reflections) mod.reflections = {};
+  if (!mod.historyScores) mod.historyScores = {};
+  if (!mod.historyFeedback) mod.historyFeedback = {};
+  
   mod.answeredIds.push(q.id);
   mod.reflections[q.id] = text;
+  mod.historyScores[q.id] = result.score;
+  mod.historyFeedback[q.id] = result.feedbackHtml;
   
   answers[idx] = true;
   appData.modules.history.answeredCount = (appData.modules.history.answeredCount || 0) + 1;
   
-  const block = document.getElementById('hblock-' + idx);
-  const fb = document.getElementById('hist-fb-' + idx);
+  var block = document.getElementById('hblock-' + idx);
   
   input.disabled = true;
   block.querySelector('.hist-submit').disabled = true;
+  block.querySelector('.hist-submit').textContent = '已提交（+' + result.score + '积分）';
   block.classList.add('answered');
   
-  fb.className = 'hist-feedback show';
-  fb.textContent = '✅ 已完成评论，+10积分！';
+  // 显示评估结果
+  var evalDiv = document.getElementById('hist-eval-' + idx);
+  evalDiv.className = 'hist-eval show ' + (result.score >= 8 ? 'score-high' : result.score >= 5 ? 'score-mid' : 'score-low');
+  evalDiv.innerHTML = result.feedbackHtml;
   
-  appData.totalPoints += POINTS_PER_CORRECT;
-  appData.todayPoints += POINTS_PER_CORRECT;
-  mod.score += POINTS_PER_CORRECT;
+  // 分数 < 5 显示重新提交按钮
+  if (result.score < 5) {
+    var retryBtn = document.createElement('button');
+    retryBtn.className = 'eval-retry-btn';
+    retryBtn.textContent = '🔄 重新写一遍';
+    retryBtn.onclick = function() {
+      input.disabled = false;
+      input.focus();
+      block.querySelector('.hist-submit').disabled = false;
+      block.querySelector('.hist-submit').textContent = '提交评论';
+      block.classList.remove('answered');
+      evalDiv.className = 'hist-eval';
+      evalDiv.innerHTML = '';
+      answers[idx] = undefined;
+      // 撤销已保存的状态（下次提交会覆盖）
+    };
+    evalDiv.appendChild(retryBtn);
+  }
+  
+  // 根据分数给积分
+  var earned = result.score;
+  appData.totalPoints += earned;
+  appData.todayPoints += earned;
+  mod.score += earned;
   
   saveData(appData);
   document.getElementById('totalPoints').textContent = appData.totalPoints;
